@@ -1,0 +1,10 @@
+# Scraper (Fase 1)
+requests==2.32.3
+truststore>=0.10.0       # certificados do sistema em redes Windows com proxy/HTTPS inspection
+beautifulsoup4==4.12.3
+# lxml não incluído: incompatibilidades com bs4 4.12.x em certos HTML — usar html.parser (built-in)
+geopy==2.4.1             # geocoding via Nominatim (OpenStreetMap)
+
+# Base de dados (Fase 2)
+supabase>=2.0.0          # cliente Python para o Supabase (upsert de eventos)
+python-dotenv>=1.0.0     # carregar .env em desenvolvimento local

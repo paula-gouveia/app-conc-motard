@@ -1,0 +1,22 @@
+# Credenciais — nunca commitar
+.env
+
+# Output do scraper (vai para o Supabase, não para o Git)
+data/concentracoes.json
+
+# Logs gerados em execução
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
