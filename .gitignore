@@ -20,5 +20,3 @@ build/
 .vscode/
 .idea/
 *.swp
-
-docs/config.js
