@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concentrações Motard · PT &amp; ES</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #111113;
+      --bg-card:     #1c1c1f;
+      --bg-header:   #0c0c0e;
+      --bg-input:    #252528;
+      --accent:      #f97316;
+      --accent-dim:  #9a4a10;
+      --text:        #ececec;
+      --text-dim:    #8e8e93;
+      --border:      #2c2c30;
+      --border-hi:   #3a3a3f;
+      --shadow:      rgba(0,0,0,0.5);
+      --radius:      11px;
+      --header-h:    54px;
+      --nav-h:       62px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-top: var(--header-h);
+      padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── CABEÇALHO ─────────────────────────────────────────────────────── */
+    header {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: var(--header-h);
+      background: var(--bg-header);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 1.1rem;
+      z-index: 1000;
+      gap: 1rem;
+    }
+
+    .logo {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+      letter-spacing: -0.01em;
+    }
+
+    .logo span { color: var(--accent); }
+
+    .desktop-tabs {
+      display: none;
+      gap: 3px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      padding: 3px;
+      margin-left: auto;
+    }
+
+    .desktop-tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 0.3rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.83rem;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .desktop-tab-btn.active  { background: var(--accent); color: #fff; }
+    .desktop-tab-btn:hover:not(.active) { background: rgba(255,255,255,0.08); color: var(--text); }
+
+    /* ── NAV INFERIOR ──────────────────────────────────────────────────── */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+      background: var(--bg-header);
+      border-top: 1px solid var(--border);
+      display: flex;
+      z-index: 1000;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .nav-btn {
+      flex: 1;
+      border: none;
+      background: transparent;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      cursor: pointer;
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 0.7rem;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+
+    .nav-btn.active { color: var(--accent); }
+    .nav-btn .nav-icon { font-size: 1.3rem; line-height: 1; }
+
+    /* ── CONTEÚDO ──────────────────────────────────────────────────────── */
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    /* ── FILTROS ───────────────────────────────────────────────────────── */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-bottom: 1rem;
+    }
+
+    .search-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+    }
+
+    .search-wrap input {
+      border: none; outline: none;
+      font-family: inherit;
+      font-size: 0.9rem;
+      width: 100%;
+      color: var(--text);
+      background: transparent;
+    }
+
+    .search-wrap input::placeholder { color: var(--text-dim); }
+
+    .filter-row {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-pills {
+      display: flex;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .pill {
+      background: transparent;
+      border: none;
+      padding: 0.3rem 0.65rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-dim);
+      white-space: nowrap;
+      transition: background 0.13s, color 0.13s;
+    }
+
+    .pill.active { background: var(--accent); color: #fff; }
+    .pill:hover:not(.active) { background: var(--border-hi); color: var(--text); }
+
+    .filter-select {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.38rem 0.65rem;
+      font-family: inherit;
+      font-size: 0.78rem;
+      color: var(--text);
+      cursor: pointer;
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238e8e93' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.55rem center;
+      padding-right: 1.8rem;
+    }
+
+    .filter-select:focus { border-color: var(--accent); }
+    .filter-select option { background: var(--bg-card); }
+
+    /* ── INFO DE RESULTADOS ────────────────────────────────────────────── */
+    .results-info {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin-bottom: 0.75rem;
+    }
+
+    /* ── LOADING & ERRO ────────────────────────────────────────────────── */
+    .loading {
+      text-align: center;
+      padding: 4rem 1rem;
+      color: var(--text-dim);
+    }
+
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 1rem;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-banner {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      color: #fca5a5;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+
+    .error-banner code {
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      padding: 0.1rem 0.3rem;
+      font-size: 0.8rem;
+    }
+
+    /* ── GRID DE CARDS ─────────────────────────────────────────────────── */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
+      gap: 0.85rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+      cursor: pointer;
+    }
+
+    .card:hover {
+      border-color: var(--border-hi);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px var(--shadow);
+    }
+
+    .card.cancelado { opacity: 0.55; }
+
+    .card-img {
+      width: 100%; height: 140px;
+      object-fit: cover; display: block;
+    }
+
+    .card-placeholder {
+      width: 100%; height: 140px;
+      background: linear-gradient(135deg, #1e1e22 0%, #2a2a30 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 3rem;
+    }
+
+    .card-body {
+      padding: 0.9rem; flex: 1;
+      display: flex; flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .card-nome {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.3;
+      margin-bottom: 0.15rem;
+    }
+
+    .card-dates {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .card-location {
+      font-size: 0.77rem;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+
+    .card-footer {
+      margin-top: auto;
+      padding-top: 0.65rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .badges { display: flex; gap: 0.25rem; flex-wrap: wrap; align-items: center; }
+
+    .badge {
+      font-size: 0.66rem;
+      font-weight: 500;
+      padding: 0.15rem 0.45rem;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+
+    .badge-tipo    { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid rgba(249,115,22,0.25); }
+    .badge-fmp     { background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.25); }
+    .badge-motard  { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); }
+    .badge-cancel  { background: rgba(239,68,68,0.15);  color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+    .badge-tier1   { background: rgba(234,179,8,0.13);  color: #facc15; border: 1px solid rgba(234,179,8,0.25); }
+
+    .card-link {
+      font-size: 0.73rem;
+      color: var(--accent);
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .card-link:hover { color: #fb923c; }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 4rem 1rem;
+      color: var(--text-dim);
+    }
+
+    .empty-state .icon { font-size: 3rem; margin-bottom: 0.75rem; }
+
+    .empty-state h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.4rem;
+    }
+
+    /* ── MAPA ──────────────────────────────────────────────────────────── */
+    #map-view { display: none; }
+
+    .map-info {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin-bottom: 0.6rem;
+    }
+
+    #mapa {
+      height: calc(100vh - var(--header-h) - var(--nav-h)
+              - env(safe-area-inset-bottom, 0px) - 3rem);
+      min-height: 400px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+
+    /* Leaflet popup */
+    .leaflet-popup-content-wrapper {
+      background: var(--bg-card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px var(--shadow);
+    }
+
+    .leaflet-popup-tip { background: var(--bg-card); }
+
+    .popup-nome  { font-size: 0.88rem; font-weight: 600; margin-bottom: 0.25rem; line-height: 1.3; }
+    .popup-dates { font-size: 0.76rem; font-weight: 600; color: var(--accent); margin-bottom: 0.2rem; }
+    .popup-loc   { font-size: 0.74rem; color: var(--text-dim); margin-bottom: 0.4rem; }
+    .popup-link  { font-size: 0.74rem; color: var(--accent); font-weight: 500; text-decoration: none; }
+    .popup-link:hover { text-decoration: underline; }
+
+    /* ── DESKTOP ≥768px ────────────────────────────────────────────────── */
+    @media (min-width: 768px) {
+      body { padding-bottom: 0; }
+      .bottom-nav { display: none; }
+      .desktop-tabs { display: flex; }
+
+      main { padding: 1.25rem 1.5rem; }
+
+      .controls { flex-direction: row; align-items: center; flex-wrap: wrap; }
+      .search-wrap { flex: 1; min-width: 200px; }
+
+      #mapa { height: calc(100vh - var(--header-h) - 5rem); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── CABEÇALHO ──────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">&#x1F3CD;&#xFE0F; Concentrações <span>Motard</span></div>
+  <nav class="desktop-tabs" aria-label="Navegação">
+    <button class="desktop-tab-btn active" data-tab="lista" onclick="switchTab('lista')">&#x1F4CB; Lista</button>
+    <button class="desktop-tab-btn"        data-tab="mapa"  onclick="switchTab('mapa')">&#x1F5FA;&#xFE0F; Mapa</button>
+  </nav>
+</header>
+
+<!-- ── CONTEÚDO PRINCIPAL ─────────────────────────────────────────────── -->
+<main>
+
+  <!-- Filtros -->
+  <div class="controls" id="controls-bar">
+
+    <div class="search-wrap">
+      <span style="color:var(--text-dim)">&#x1F50D;</span>
+      <input type="search" id="search-input" autocomplete="off"
+             placeholder="Pesquisar por nome, localidade&#x2026;"
+             oninput="applyFilters()">
+    </div>
+
+    <div class="filter-row">
+      <div class="filter-pills" role="group" aria-label="País">
+        <button class="pill active" data-pais="todos"  onclick="setPais('todos')">Todos</button>
+        <button class="pill"        data-pais="PT"     onclick="setPais('PT')">&#x1F1F5;&#x1F1F9; PT</button>
+        <button class="pill"        data-pais="ES"     onclick="setPais('ES')">&#x1F1EA;&#x1F1F8; ES</button>
+      </div>
+
+      <div class="filter-pills" role="group" aria-label="Tempo">
+        <button class="pill active" data-tempo="proximas" onclick="setTempo('proximas')">Pr&#xF3;ximas</button>
+        <button class="pill"        data-tempo="30d"      onclick="setTempo('30d')">30 dias</button>
+        <button class="pill"        data-tempo="3m"       onclick="setTempo('3m')">3 meses</button>
+        <button class="pill"        data-tempo="todos"    onclick="setTempo('todos')">Todos</button>
+      </div>
+    </div>
+
+    <div class="filter-row">
+      <select id="sel-tipo" class="filter-select" onchange="applyFilters()">
+        <option value="">Todos os tipos</option>
+      </select>
+
+      <select id="sel-distrito" class="filter-select" onchange="applyFilters()">
+        <option value="">Todos os distritos/prov.</option>
+      </select>
+    </div>
+
+  </div>
+
+  <!-- Erro -->
+  <div id="error-banner" class="error-banner" style="display:none"></div>
+
+  <!-- Vista: Lista -->
+  <div id="lista-view">
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <p>A carregar eventos&#x2026;</p>
+    </div>
+    <p class="results-info" id="results-info" style="display:none"></p>
+    <div class="cards-grid" id="cards-container"></div>
+  </div>
+
+  <!-- Vista: Mapa -->
+  <div id="map-view">
+    <p class="map-info" id="map-info"></p>
+    <div id="mapa"></div>
+  </div>
+
+</main>
+
+<!-- ── NAV INFERIOR ───────────────────────────────────────────────────── -->
+<nav class="bottom-nav" aria-label="Navegação">
+  <button class="nav-btn active" data-tab="lista" onclick="switchTab('lista')">
+    <span class="nav-icon">&#x1F4CB;</span>
+    <span>Lista</span>
+  </button>
+  <button class="nav-btn" data-tab="mapa" onclick="switchTab('mapa')">
+    <span class="nav-icon">&#x1F5FA;&#xFE0F;</span>
+    <span>Mapa</span>
+  </button>
+</nav>
+
+<!-- ── SCRIPTS ────────────────────────────────────────────────────────── -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="config.js"></script>
+
+<script>
+/* ======================================================================
+   CONSTANTES
+====================================================================== */
+const MESES = [
+  'jan','fev','mar','abr','mai','jun',
+  'jul','ago','set','out','nov','dez'
+];
+
+const MESES_LONGO = [
+  'janeiro','fevereiro','março','abril','maio','junho',
+  'julho','agosto','setembro','outubro','novembro','dezembro'
+];
+
+const TIPOS_PT = {
+  concentracao:    'Concentração',
+  aniversario:     'Aniversário',
+  motochurrasco:   'Motochurrasco',
+  convivio:        'Convívio',
+  moto_rali:       'Moto-Rali',
+  moto_rali_trofeu:'Troféu Moto-Ralis',
+  evento_fmp:      'Evento FMP',
+  passeio:         'Passeio',
+  bencao:          'Bênção',
+  matinal:         'Matinal',
+  arraial:         'Arraial',
+  magusto:         'Magusto',
+  halloween:       'Halloween',
+  natal:           'Natal',
+  solidario:       'Solidário',
+  desfile:         'Desfile',
+  trail:           'Trail',
+  custom:          'Custom',
+  classicas:       'Clássicas',
+  festival:        'Festival',
+  run:             'Run',
+  outro:           'Outro',
+};
+
+const FONTES_PT = {
+  motardfm:              'MotardFM',
+  fmp:                   'FMP',
+  eventomotor:           'EventoMotor',
+  concentracionesdemotos:'ConcentraDeMoots',
+};
+
+const TIPO_ICONES = {
+  concentracao:    '🏍️',
+  aniversario:     '🎂',
+  motochurrasco:   '🍖',
+  convivio:        '🤝',
+  moto_rali:       '🏁',
+  moto_rali_trofeu:'🏆',
+  evento_fmp:      '⭐',
+  passeio:         '🛤️',
+  bencao:          '⛪',
+  matinal:         '☀️',
+  arraial:         '🎉',
+  magusto:         '🌰',
+  halloween:       '🎃',
+  natal:           '🎄',
+  solidario:       '❤️',
+  desfile:         '🚦',
+  trail:           '🌲',
+  custom:          '🔧',
+  classicas:       '🕰️',
+  festival:        '🎪',
+  run:             '🏃',
+  outro:           '📌',
+};
+
+/* ======================================================================
+   ESTADO
+====================================================================== */
+let todosEventos    = [];
+let eventosFiltrados = [];
+let currentTab = 'lista';
+let filtros = { pais: 'todos', tempo: 'proximas', tipo: '', distrito: '' };
+let mapa       = null;
+let marcadores = [];
+
+/* ======================================================================
+   UTILITÁRIOS DE DATA
+====================================================================== */
+function hoje() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDias(n) {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function addMeses(n) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatPeriodo(inicio, fim) {
+  if (!inicio) return '—';
+  if (!fim || fim === inicio) return formatData(inicio);
+  const [y1, m1, d1] = inicio.split('-').map(Number);
+  const [y2, m2, d2] = fim.split('-').map(Number);
+  if (y1 === y2 && m1 === m2) return `${d1}–${d2} ${MESES[m1-1]} ${y1}`;
+  if (y1 === y2) return `${d1} ${MESES[m1-1]} – ${d2} ${MESES[m2-1]} ${y1}`;
+  return `${formatData(inicio)} – ${formatData(fim)}`;
+}
+
+function formatData(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-');
+  return `${parseInt(d)} ${MESES_LONGO[parseInt(m) - 1]} ${y}`;
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ======================================================================
+   SUPABASE — busca todos os eventos de uma vez (dataset pequeno)
+====================================================================== */
+async function fetchEventos() {
+  const url = `${CONFIG.supabaseUrl}/rest/v1/concentracoes`
+    + `?select=*&order=data_inicio.asc,nome.asc&limit=2000`;
+  const resp = await fetch(url, {
+    headers: {
+      'apikey':        CONFIG.supabaseAnonKey,
+      'Authorization': `Bearer ${CONFIG.supabaseAnonKey}`,
+    }
+  });
+  if (!resp.ok) throw new Error(`Supabase respondeu com ${resp.status}`);
+  return resp.json();
+}
+
+/* ======================================================================
+   POPULAR SELECTS DINÂMICOS
+====================================================================== */
+function popularSelects(eventos) {
+  // Tipos presentes nos dados
+  const tipos = [...new Set(eventos.map(e => e.tipo_evento).filter(Boolean))].sort();
+  const selTipo = document.getElementById('sel-tipo');
+  tipos.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = TIPOS_PT[t] || t;
+    selTipo.appendChild(opt);
+  });
+
+  // Distritos/províncias presentes
+  const distritos = [...new Set(eventos.map(e => e.distrito_provincia).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt'));
+  const selDist = document.getElementById('sel-distrito');
+  distritos.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d;
+    selDist.appendChild(opt);
+  });
+}
+
+/* ======================================================================
+   FILTROS
+====================================================================== */
+function setPais(pais) {
+  filtros.pais = pais;
+  document.querySelectorAll('[data-pais]').forEach(b =>
+    b.classList.toggle('active', b.dataset.pais === pais));
+  applyFilters();
+}
+
+function setTempo(tempo) {
+  filtros.tempo = tempo;
+  document.querySelectorAll('[data-tempo]').forEach(b =>
+    b.classList.toggle('active', b.dataset.tempo === tempo));
+  applyFilters();
+}
+
+function applyFilters() {
+  const pesquisa  = document.getElementById('search-input').value.trim().toLowerCase();
+  filtros.tipo    = document.getElementById('sel-tipo').value;
+  filtros.distrito = document.getElementById('sel-distrito').value;
+
+  const hj   = hoje();
+  const lim30 = addDias(30);
+  const lim3m = addMeses(3);
+
+  eventosFiltrados = todosEventos.filter(e => {
+    // País
+    if (filtros.pais !== 'todos' && e.pais !== filtros.pais) return false;
+
+    // Tempo: usa data_fim para eventos de vários dias; se null usa data_inicio
+    const fimEfetivo = e.data_fim || e.data_inicio;
+    if (filtros.tempo === 'proximas' && fimEfetivo < hj)  return false;
+    if (filtros.tempo === '30d' && (fimEfetivo < hj || e.data_inicio > lim30)) return false;
+    if (filtros.tempo === '3m'  && (fimEfetivo < hj || e.data_inicio > lim3m)) return false;
+
+    // Tipo
+    if (filtros.tipo && e.tipo_evento !== filtros.tipo) return false;
+
+    // Distrito/Província
+    if (filtros.distrito && e.distrito_provincia !== filtros.distrito) return false;
+
+    // Pesquisa
+    if (pesquisa) {
+      const haystack = [e.nome, e.localidade, e.distrito_provincia, e.organizador]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(pesquisa)) return false;
+    }
+
+    return true;
+  });
+
+  if (currentTab === 'lista') renderLista();
+  else renderMapa();
+}
+
+/* ======================================================================
+   RENDER: LISTA DE CARDS
+====================================================================== */
+function renderLista() {
+  const container = document.getElementById('cards-container');
+  const info      = document.getElementById('results-info');
+  info.style.display = 'block';
+
+  if (eventosFiltrados.length === 0) {
+    info.textContent = '';
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">🏍️</div>
+        <h3>Nenhum evento encontrado</h3>
+        <p>Tenta ajustar os filtros ou a pesquisa.</p>
+      </div>`;
+    return;
+  }
+
+  const total = eventosFiltrados.length;
+  const cancelados = eventosFiltrados.filter(e => e.cancelado).length;
+  info.textContent = cancelados > 0
+    ? `${total} eventos encontrados (${cancelados} cancelado${cancelados > 1 ? 's' : ''})`
+    : `${total} eventos encontrados`;
+
+  container.innerHTML = eventosFiltrados.map(e => cardHTML(e)).join('');
+}
+
+function cardHTML(e) {
+  const bandeira = e.pais === 'PT' ? '🇵🇹' : '🇪🇸';
+  const locParts  = [e.localidade, e.distrito_provincia].filter(Boolean);
+  const locStr    = locParts.length ? locParts.join(', ') : 'Localização desconhecida';
+  const icone     = TIPO_ICONES[e.tipo_evento] || '📌';
+  const tipoLabel = TIPOS_PT[e.tipo_evento] || e.tipo_evento || 'Outro';
+  const fonteLabel = FONTES_PT[e.fonte] || e.fonte || '';
+
+  const imgTag = e.url_cartaz
+    ? `<img class="card-img" src="${esc(e.url_cartaz)}" alt="${esc(e.nome)}" loading="lazy"
+            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+    : '';
+  const placeholder = `<div class="card-placeholder" style="${e.url_cartaz ? 'display:none' : ''}">${icone}</div>`;
+
+  const linkHtml = e.url_evento
+    ? `<a class="card-link" href="${esc(e.url_evento)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver mais &#x2197;</a>`
+    : '';
+
+  const badgeTipo   = `<span class="badge badge-tipo">${esc(tipoLabel)}</span>`;
+  const badgeFonte  = e.fonte === 'fmp' || e.fonte === 'motardfm'
+                    ? `<span class="badge badge-fmp">${esc(fonteLabel)}</span>`
+                    : `<span class="badge badge-motard">${esc(fonteLabel)}</span>`;
+  const badgeTier1  = e.tier === 1 ? '<span class="badge badge-tier1">&#x2B50; Oficial</span>' : '';
+  const badgeCancel = e.cancelado ? '<span class="badge badge-cancel">CANCELADO</span>' : '';
+
+  return `
+    <article class="card${e.cancelado ? ' cancelado' : ''}">
+      ${imgTag}${placeholder}
+      <div class="card-body">
+        <h2 class="card-nome">${esc(e.nome)}</h2>
+        <p class="card-dates">&#x1F4C5; ${formatPeriodo(e.data_inicio, e.data_fim)}</p>
+        <p class="card-location">&#x1F4CD; ${bandeira} ${esc(locStr)}</p>
+        <div class="card-footer">
+          <div class="badges">${badgeTipo}${badgeTier1}${badgeCancel}</div>
+          ${linkHtml}
+        </div>
+        <div class="badges" style="margin-top:0.4rem">${badgeFonte}</div>
+      </div>
+    </article>`;
+}
+
+/* ======================================================================
+   RENDER: MAPA
+====================================================================== */
+function initMapa() {
+  if (mapa) return;
+  mapa = L.map('mapa').setView([40.0, -4.5], 6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19,
+  }).addTo(mapa);
+}
+
+function renderMapa() {
+  initMapa();
+  marcadores.forEach(m => mapa.removeLayer(m));
+  marcadores = [];
+
+  const comCoords = eventosFiltrados.filter(e => e.latitude != null && e.longitude != null);
+  const semCoords = eventosFiltrados.length - comCoords.length;
+  const infoEl = document.getElementById('map-info');
+
+  if (eventosFiltrados.length === 0) {
+    infoEl.textContent = 'Nenhum evento corresponde aos filtros actuais.';
+    return;
+  }
+
+  const semTxt = semCoords > 0 ? ` · ${semCoords} sem GPS` : '';
+  infoEl.textContent = `${comCoords.length} de ${eventosFiltrados.length} eventos com GPS${semTxt}`;
+
+  comCoords.forEach(e => {
+    const bandeira  = e.pais === 'PT' ? '🇵🇹' : '🇪🇸';
+    const locParts  = [e.localidade, e.distrito_provincia].filter(Boolean);
+    const locStr    = locParts.length ? locParts.join(', ') : '';
+    const tipoLabel = TIPOS_PT[e.tipo_evento] || '';
+    const linkHtml  = e.url_evento
+      ? `<a class="popup-link" href="${esc(e.url_evento)}" target="_blank" rel="noopener">Ver mais &#x2192;</a>`
+      : '';
+
+    const popup = `
+      <div class="popup-nome">${esc(e.nome)}</div>
+      <div class="popup-dates">📅 ${formatPeriodo(e.data_inicio, e.data_fim)}</div>
+      ${locStr ? `<div class="popup-loc">📍 ${bandeira} ${esc(locStr)}</div>` : ''}
+      ${tipoLabel ? `<div class="popup-loc">${esc(tipoLabel)}</div>` : ''}
+      ${linkHtml}
+    `;
+
+    const m = L.marker([e.latitude, e.longitude]).bindPopup(popup);
+    m.addTo(mapa);
+    marcadores.push(m);
+  });
+
+  if (marcadores.length > 0) {
+    try {
+      mapa.fitBounds(L.featureGroup(marcadores).getBounds().pad(0.1));
+    } catch (_) {}
+  }
+}
+
+/* ======================================================================
+   TROCA DE VISTA
+====================================================================== */
+function switchTab(tab) {
+  currentTab = tab;
+
+  document.querySelectorAll('[data-tab]').forEach(el =>
+    el.classList.toggle('active', el.dataset.tab === tab));
+
+  document.getElementById('lista-view').style.display  = tab === 'lista' ? '' : 'none';
+  document.getElementById('map-view').style.display    = tab === 'mapa'  ? '' : 'none';
+  document.getElementById('controls-bar').style.display = '';
+
+  if (tab === 'mapa') {
+    renderMapa();
+    setTimeout(() => mapa && mapa.invalidateSize(), 60);
+  }
+}
+
+/* ======================================================================
+   ARRANQUE
+====================================================================== */
+async function init() {
+  try {
+    todosEventos = await fetchEventos();
+    document.getElementById('loading').style.display = 'none';
+    popularSelects(todosEventos);
+    applyFilters();
+  } catch (err) {
+    document.getElementById('loading').style.display = 'none';
+    const banner = document.getElementById('error-banner');
+    banner.style.display = 'block';
+    banner.innerHTML = `
+      <strong>⚠️ Não foi possível carregar os dados.</strong><br>
+      ${esc(err.message)}<br>
+      <small>Verifica se o <code>config.js</code> tem o URL e a chave anon correctos.</small>
+    `;
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>
