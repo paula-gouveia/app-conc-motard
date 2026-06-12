@@ -3,20 +3,32 @@ fmp.py — Scraper para a FMP (Federação de Motociclismo de Portugal).
 
 URL: https://www.fmp.pt/noticias/mototurismo/calendario-de-mototurismo-2026/
 
-Estrutura do site:
-  A FMP publica o calendário de mototurismo como um artigo de notícia.
-  O conteúdo é uma tabela HTML ou uma lista com colunas:
-    Data | Prova | Local | Organização | Distrito
+Estrutura real do site (inspeccionada):
+  A FMP publica o calendário como um artigo WordPress com texto livre.
+  NÃO é uma tabela HTML.
 
-Estes são eventos de Tier 1 — eventos oficiais da federação,
-normalmente mais organizados e com mais visibilidade.
+  Organização do artigo:
+    <strong>Eventos FMP</strong>          ← cabeçalho de secção (negrito)
+    12 de abril – 28º Dia Nacional...     ← linha de evento
+    30 abr. a 3 de maio – 2º Portugal...  ← linha de evento
+    ...
+    <strong>29º Troféu Nacional de Moto-Ralis Turísticos</strong>
+    28/29 de março – M.C. Albufeira ...
+    ...
+    <strong>Concentrações</strong>
+    27 fev. a 1 de março – M.C Covilhã
+    ...
 
-Diferenças em relação ao MotardFM:
-  - Estrutura tabular (não texto livre) → parsing mais simples.
-  - Tem district/organização explícitos.
-  - Não tem cartazes/imagens por norma.
-  - O URL pode mudar a cada ano (o número no final muda).
-    Se a URL não funcionar, o main.py deve ser actualizado com o novo URL.
+  Separador entre campos: EN DASH (–) com espaços à volta.
+  Cada linha: "Data – Organização/Nome [– Localidade]"
+
+Formatos de data observados:
+  "12 de abril"               → dia único, mês por extenso
+  "28/29 de março"            → dois dias no mesmo mês (barra)
+  "10 a 13 de junho"          → intervalo, mesmo mês ("e" também aceite: "5 e 6 de junho")
+  "30 abr. a 3 de maio"       → intervalo cross-mês (abreviação + extenso)
+  "27 fev. a 1 de março"      → idem
+  "Junho (a definir)"         → mês sem dia definido → ignorar
 """
 
 from __future__ import annotations
@@ -35,76 +47,150 @@ from .normalizer import normalizar_tipo, inferir_regiao_pt
 
 logger = logging.getLogger(__name__)
 
-# Mapeamento meses PT (abreviados → número)
+# Meses PT — por extenso e abreviados
 MESES = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4,
     "mai": 5, "jun": 6, "jul": 7, "ago": 8,
     "set": 9, "out": 10, "nov": 11, "dez": 12,
-    # Por extenso
     "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
     "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
     "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
 }
 
+# Cabeçalhos de secção → tipo_evento normalizado
+SECOES = {
+    "eventos fmp":                              "evento_fmp",
+    "troféu nacional de moto-ralis":            "moto_rali_trofeu",
+    "trofeu nacional de moto-ralis":            "moto_rali_trofeu",
+    "concentrações":                            "concentracao",
+    "concentracoes":                            "concentracao",
+}
 
-def _parse_data_fmp(texto: str, ano: int) -> tuple[Optional[str], Optional[str]]:
+
+def _detectar_secao(texto: str) -> Optional[str]:
+    """Retorna o tipo_evento se o texto corresponde a um cabeçalho de secção."""
+    t = texto.lower().strip()
+    for chave, tipo in SECOES.items():
+        if chave in t:
+            return tipo
+    return None
+
+
+def _normalizar_mes(texto: str) -> Optional[int]:
+    """Converte nome ou abreviação de mês para número (1-12)."""
+    t = texto.lower().strip().rstrip(".")
+    # Tentar correspondência exacta
+    if t in MESES:
+        return MESES[t]
+    # Tentar pelos primeiros 3 caracteres (cobre abreviações como "abr.", "jul.")
+    if len(t) >= 3 and t[:3] in MESES:
+        return MESES[t[:3]]
+    return None
+
+
+def _parse_data(texto: str, ano: int) -> tuple[Optional[str], Optional[str]]:
     """
-    Parseia datas no formato FMP.
+    Parseia os formatos de data usados pela FMP.
 
-    Formatos observados:
-      "14 Jun"          → dia único, mês abreviado
-      "14 e 15 Jun"     → dois dias
-      "14 a 16 Jun"     → intervalo
-      "14 Jun a 16 Jun" → intervalo com mês em ambos
-      "14/06"           → DD/MM
-
-    Retorna (data_inicio, data_fim) em ISO YYYY-MM-DD.
+    Retorna (data_inicio, data_fim) em YYYY-MM-DD,
+    ou (None, None) se o formato não for reconhecido.
     """
     t = texto.strip().lower()
 
-    # DD/MM
-    m = re.match(r'^(\d{1,2})/(\d{1,2})\s*(?:a\s*(\d{1,2})/(\d{1,2}))?$', t)
-    if m:
-        d1, mes1, d2, mes2 = m.groups()
-        inicio = f"{ano}-{int(mes1):02d}-{int(d1):02d}"
-        fim = f"{ano}-{int(mes2):02d}-{int(d2):02d}" if d2 else inicio
-        return inicio, fim
-
-    # "14 a 16 Jun" ou "14 e 15 Jun"
-    m = re.match(r'^(\d{1,2})\s+[ae]\s+(\d{1,2})\s+(\w+)$', t)
+    # "28/29 de março" → dois dias no mesmo mês
+    m = re.match(r'^(\d{1,2})/(\d{1,2})\s+de\s+(\w+\.?)', t)
     if m:
         d1, d2, mes = m.groups()
-        num = MESES.get(mes[:3])
+        num = _normalizar_mes(mes)
         if num:
             return f"{ano}-{num:02d}-{int(d1):02d}", f"{ano}-{num:02d}-{int(d2):02d}"
 
-    # "14 Jun"
-    m = re.match(r'^(\d{1,2})\s+(\w+)$', t)
+    # "30 abr. a 3 de maio" ou "27 fev. a 1 de março" → cross-mês
+    m = re.match(r'^(\d{1,2})\s+(\w+\.?)\s+a\s+(\d{1,2})\s+de\s+(\w+\.?)', t)
+    if m:
+        d1, mes1, d2, mes2 = m.groups()
+        num1, num2 = _normalizar_mes(mes1), _normalizar_mes(mes2)
+        if num1 and num2:
+            return f"{ano}-{num1:02d}-{int(d1):02d}", f"{ano}-{num2:02d}-{int(d2):02d}"
+
+    # "10 a 13 de junho" ou "5 e 6 de junho" → intervalo mesmo mês
+    m = re.match(r'^(\d{1,2})\s+[ae]\s+(\d{1,2})\s+de\s+(\w+\.?)', t)
+    if m:
+        d1, d2, mes = m.groups()
+        num = _normalizar_mes(mes)
+        if num:
+            return f"{ano}-{num:02d}-{int(d1):02d}", f"{ano}-{num:02d}-{int(d2):02d}"
+
+    # "12 de abril" → dia único
+    m = re.match(r'^(\d{1,2})\s+de\s+(\w+\.?)', t)
     if m:
         d, mes = m.groups()
-        num = MESES.get(mes[:3])
+        num = _normalizar_mes(mes)
         if num:
             iso = f"{ano}-{num:02d}-{int(d):02d}"
             return iso, iso
 
+    # "Junho (a definir)" → sem dia ainda — ignorar
     return None, None
+
+
+def _parsear_linha_evento(linha: str, tipo_secao: str, ano: int) -> Optional[dict]:
+    """
+    Parseia uma linha de evento do artigo FMP.
+
+    Formato esperado: "Data – Nome/Organização [– Localidade]"
+    O separador é o EN DASH (–) com espaços.
+    """
+    linha = linha.strip()
+    if not linha or len(linha) < 5:
+        return None
+
+    # Separar pelos " – " (EN DASH com espaços)
+    # Também aceitar " - " (hífen ASCII) para robustez
+    partes = re.split(r'\s+[–\-]\s+', linha)
+    if len(partes) < 2:
+        return None
+
+    data_texto = partes[0].strip()
+    nome_org = partes[1].strip()
+    localidade = partes[2].strip() if len(partes) >= 3 else None
+
+    # Parsear data
+    data_inicio, data_fim = _parse_data(data_texto, ano)
+    if not data_inicio:
+        return None
+
+    # Para o Troféu, a localidade pode estar entre parênteses no nome
+    # Ex: "M.C. Albufeira (Ria Formosa)" → organização + local entre ()
+    m_paren = re.search(r'\(([^)]+)\)\s*$', nome_org)
+    if m_paren and not localidade:
+        localidade = m_paren.group(1)
+        nome_org = nome_org[:m_paren.start()].strip()
+
+    return {
+        "nome":         nome_org,
+        "data_inicio":  data_inicio,
+        "data_fim":     data_fim,
+        "organizador":  nome_org,
+        "localidade":   localidade.split(",")[0].strip() if localidade else None,
+        "tipo_secao":   tipo_secao,
+    }
 
 
 def run(url: str, session: requests.Session | None = None, ano: int = 2026) -> list[Concentracao]:
     """
     Scraper do calendário de mototurismo da FMP.
 
-    A FMP publica os eventos como uma tabela HTML. As colunas variam de ano
-    para ano mas tipicamente são: Data, Prova, Local, Organização, Distrito.
-
     Fluxo:
-    1. Fazer fetch da página.
-    2. Encontrar a tabela de eventos.
-    3. Parsear cada linha.
-    4. Geocodificar.
+    1. Fetch da página do artigo.
+    2. Encontrar o corpo do artigo.
+    3. Percorrer todos os elementos de texto:
+       - <strong> sozinho → cabeçalho de secção → actualizar tipo corrente
+       - linha com data → parsear como evento
+    4. Geocodificar localidades.
 
     Returns:
-        Lista de objectos Concentracao (tier=1).
+        Lista de Concentracao (tier=1, pais="PT").
     """
     if session is None:
         session = make_session()
@@ -113,171 +199,67 @@ def run(url: str, session: requests.Session | None = None, ano: int = 2026) -> l
 
     soup = get_soup(url, session, delay=1.0)
     if not soup:
-        logger.error("Não foi possível aceder à FMP. A abortar.")
+        logger.error("FMP: não foi possível aceder à página. A abortar.")
         return []
 
+    # Encontrar o corpo do artigo WordPress
+    conteudo = (
+        soup.find("div", class_="entry-content")
+        or soup.find("article")
+        or soup.find("main")
+        or soup
+    )
+
     agora = datetime.utcnow().isoformat()
+    tipo_atual = "concentracao"  # default se não encontrar cabeçalho
     eventos: list[Concentracao] = []
 
-    # A FMP usa tabelas HTML para o calendário.
-    # Tentamos encontrar a tabela que contenha os cabeçalhos esperados.
-    tabelas = soup.find_all("table")
-    tabela_alvo = None
-    for tabela in tabelas:
-        texto = tabela.get_text().lower()
-        # Verificar se esta tabela tem conteúdo de calendário
-        if any(k in texto for k in ("data", "prova", "local", "distrito", "organiz")):
-            tabela_alvo = tabela
-            break
+    # Extrair todo o texto do artigo, linha a linha
+    # get_text(separator="\n") garante uma linha por elemento inline
+    texto_completo = conteudo.get_text(separator="\n")
+    linhas = [l.strip() for l in texto_completo.splitlines() if l.strip()]
 
-    if tabela_alvo:
-        _parsear_tabela(tabela_alvo, eventos, agora, ano)
-    else:
-        # Fallback: tentar encontrar listas ou parágrafos com datas
-        logger.warning("FMP: tabela não encontrada. A tentar parsing de listas.")
-        _parsear_fallback(soup, eventos, agora, ano)
-
-    logger.info("FMP: %d eventos recolhidos.", len(eventos))
-    return eventos
-
-
-def _parsear_tabela(tabela, eventos: list, agora: str, ano: int) -> None:
-    """Parseia a tabela principal do calendário FMP."""
-    linhas = tabela.find_all("tr")
-
-    # Detectar índices das colunas pelo cabeçalho
-    idx_data = idx_prova = idx_local = idx_org = idx_dist = None
-    cabecalho = linhas[0] if linhas else None
-    if cabecalho:
-        cels = cabecalho.find_all(["th", "td"])
-        for i, cel in enumerate(cels):
-            t = cel.get_text(strip=True).lower()
-            if "data" in t:
-                idx_data = i
-            elif "prova" in t or "evento" in t or "nome" in t:
-                idx_prova = i
-            elif "local" in t:
-                idx_local = i
-            elif "organiz" in t:
-                idx_org = i
-            elif "distrit" in t or "distrito" in t:
-                idx_dist = i
-
-    # Defaults sensatos se o cabeçalho não foi encontrado
-    if idx_data is None:
-        idx_data = 0
-    if idx_prova is None:
-        idx_prova = 1
-    if idx_local is None:
-        idx_local = 2
-    if idx_org is None:
-        idx_org = 3
-    if idx_dist is None:
-        idx_dist = 4
-
-    for linha in linhas[1:]:  # Saltar cabeçalho
-        cels = linha.find_all(["td", "th"])
-        if len(cels) < 2:
+    for linha in linhas:
+        # Detectar cabeçalho de secção (bold headers no artigo FMP)
+        tipo_detectado = _detectar_secao(linha)
+        if tipo_detectado:
+            tipo_atual = tipo_detectado
+            logger.debug("FMP: secção detectada: %s → %s", linha[:40], tipo_atual)
             continue
 
-        def cel_texto(idx):
-            if idx is not None and idx < len(cels):
-                return cels[idx].get_text(strip=True)
-            return None
-
-        data_texto = cel_texto(idx_data)
-        prova = cel_texto(idx_prova)
-        local = cel_texto(idx_local)
-        org = cel_texto(idx_org)
-        distrito = cel_texto(idx_dist)
-
-        if not data_texto or not prova:
+        # Tentar parsear como linha de evento
+        dados = _parsear_linha_evento(linha, tipo_atual, ano)
+        if not dados:
             continue
 
-        data_inicio, data_fim = _parse_data_fmp(data_texto, ano)
-        if not data_inicio:
-            logger.debug("FMP: data não reconhecida: %s", data_texto)
-            continue
-
-        # Tipo: para eventos FMP, o nome da prova geralmente contém o tipo
-        tipo = normalizar_tipo(prova, pais="PT")
-
-        # Geocodificação: usar localidade se disponível, senão distrito
-        localidade = local.split(",")[0].strip() if local else None
         coords, uncertain = geocode(
-            localidade=localidade,
-            distrito_provincia=distrito,
+            localidade=dados.get("localidade"),
             pais="Portugal",
         )
         lat = coords[0] if coords else None
         lng = coords[1] if coords else None
 
-        regiao = inferir_regiao_pt(distrito)
-
         c = Concentracao(
-            nome=prova,
-            data_inicio=data_inicio,
-            data_fim=data_fim,
+            nome=dados["nome"],
+            data_inicio=dados["data_inicio"],
+            data_fim=dados["data_fim"],
             pais="PT",
             fonte="fmp",
-            tipo_evento=tipo,
+            tipo_evento=dados["tipo_secao"],
             tier=1,
             tem_cartaz=False,
             cancelado=False,
             sem_info=False,
             geocoding_uncertain=uncertain,
             atualizado_em=agora,
-            organizador=org,
-            localidade=localidade,
-            distrito_provincia=distrito,
-            regiao=regiao,
+            organizador=dados.get("organizador"),
+            localidade=dados.get("localidade"),
             latitude=lat,
             longitude=lng,
+            url_evento=url,
         )
         eventos.append(c)
-        logger.debug("FMP evento: %s (%s)", c.nome, c.data_inicio)
+        logger.debug("FMP: %s (%s)", c.nome, c.data_inicio)
 
-
-def _parsear_fallback(soup, eventos: list, agora: str, ano: int) -> None:
-    """
-    Fallback para quando a FMP não usa tabela.
-    Tenta parsear o conteúdo como texto com datas + nomes.
-    Menos preciso — serve de salvaguarda se o layout mudar.
-    """
-    conteudo = soup.find("article") or soup.find("main") or soup
-    paragrafos = conteudo.find_all("p")
-
-    for p in paragrafos:
-        texto = p.get_text(strip=True)
-        if not texto or len(texto) < 8:
-            continue
-
-        # Tentar extrair data do início do parágrafo
-        m = re.match(r'^(\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*)', texto, re.IGNORECASE)
-        if not m:
-            continue
-
-        data_texto = m.group(1)
-        data_inicio, data_fim = _parse_data_fmp(data_texto, ano)
-        if not data_inicio:
-            continue
-
-        nome = texto[m.end():].strip(" –-").strip()
-        if not nome:
-            continue
-
-        c = Concentracao(
-            nome=nome,
-            data_inicio=data_inicio,
-            data_fim=data_fim,
-            pais="PT",
-            fonte="fmp",
-            tipo_evento="outro",
-            tier=1,
-            tem_cartaz=False,
-            cancelado=False,
-            sem_info=False,
-            geocoding_uncertain=True,
-            atualizado_em=agora,
-        )
-        eventos.append(c)
+    logger.info("FMP: %d eventos recolhidos.", len(eventos))
+    return eventos

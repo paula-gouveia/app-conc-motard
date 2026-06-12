@@ -42,6 +42,10 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Executar scraper
+        # NOTA: O motardfm.org bloqueia os IP ranges do GitHub Actions com 403
+        # (protecção Cloudflare). O scraper corre mas retorna 0 eventos para
+        # essa fonte. Para recolher dados do MotardFM, corre localmente:
+        #   python main.py && python db/import.py
         run: python main.py
         env:
           PYTHONUNBUFFERED: "1"

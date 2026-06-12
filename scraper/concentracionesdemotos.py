@@ -1,36 +1,29 @@
 """
 concentracionesdemotos.py — Scraper para concentracionesdemotos.com (Espanha).
 
-URLs:
-  - Listagem principal: https://www.concentracionesdemotos.com/concentraciones/
-  - Páginas mensais (meses restantes do ano):
-      https://www.concentracionesdemotos.com/julio-2026
-      https://www.concentracionesdemotos.com/agosto-2026
-      ... até dezembro-2026
+Estrutura real do site (inspeccionada):
+  LISTAGEM (/concentraciones/):
+    Os eventos estão em <li> com links <a> cujo texto tem o formato:
+      "EVENT NAME City (Province) DD/MM/YYYY"
+    Exemplo:
+      "CONCENTRACIÓN MOTORIZOS San Lorenzo de la Parrilla (Cuenca)12/06/2026"
+    com href: "https://www.concentracionesdemotos.com/concentracion-motorizos-cuenca/"
 
-Porquê páginas mensais separadas?
-  A listagem principal (/concentraciones/) mostra por defeito os eventos dos
-  próximos 2 meses. Para cobrir o resto do ano, usamos as URLs mensais que
-  o próprio site disponibiliza no menu de navegação. Estas URLs são definidas
-  em config.py (CONCENTRACIONESDEMOTOS_MESES_ES) e incluídas na chamada run().
+    ATENÇÃO: Os URLs de detalhe NÃO seguem um padrão único.
+    Alguns: /concentracion-slug/  Outros: /slug/ (sem prefixo).
+    Estratégia: detectar os <li> que contêm datas (DD/MM/YYYY).
 
-Estrutura do site:
-  Cada evento aparece como um card/artigo com:
-    - Título (link para detalhe)
-    - Data no formato "DD Mes YYYY"
-    - Localidade e Provincia
-    - Tipo de evento (etiqueta/badge)
-
-  A página de detalhe tem:
-    - Campos estruturados: data, localidade, provincia, preço, organização
-    - Descrição livre
-    - Às vezes um link para o cartaz ou site do evento
-
-Estratégia:
-  1. Fetch de cada URL de listagem (principal + mensais).
-  2. Extrair links de detalhe únicos.
-  3. Visitar cada detalhe para dados completos.
-  Idem ao EventoMotor — detalhe é mais fiável que o resumo da listagem.
+  PÁGINA DE DETALHE:
+    Usa <h3>Rótulo</h3> seguido de texto irmão (não <dl>/<dt>/<dd>).
+    Exemplo estrutura HTML:
+      <h3>Fecha del Evento</h3>
+      <p> 12/06/2026-14/06/2026</p>
+      <h3>Tipo de Evento</h3>
+      <p> Concentración</p>
+      <h3>Quién Organiza</h3>
+      <p> Peña Motera La Parrilla</p>
+      <h3>Cuánto Cuesta</h3>
+      <p> 35€ anticipada - 40€ en el recinto</p>
 """
 
 from __future__ import annotations
@@ -49,118 +42,107 @@ from .normalizer import normalizar_tipo
 
 logger = logging.getLogger(__name__)
 
-MESES_ES = {
-    "ene": 1, "feb": 2, "mar": 3, "abr": 4,
-    "may": 5, "jun": 6, "jul": 7, "ago": 8,
-    "sep": 9, "oct": 10, "nov": 11, "dic": 12,
-    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
-    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
-    "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
-}
 
-
-def _parse_data_es(texto: str, ano: int) -> tuple[Optional[str], Optional[str]]:
+def _parse_data_es(texto: str) -> tuple[Optional[str], Optional[str]]:
     """
-    Parseia datas em espanhol para este site.
+    Parseia datas no formato do concentracionesdemotos.com.
 
-    Formatos típicos do concentracionesdemotos.com:
-      "12 de Julio de 2026"
-      "12 al 14 de Julio de 2026"
-      "12 Julio 2026"
-      "12-14 Julio 2026"
+    Formatos observados:
+      "12/06/2026"                    → dia único
+      "12/06/2026-14/06/2026"         → intervalo
+      "12/06/2026 - 14/06/2026"       → intervalo com espaços
     """
-    t = texto.strip().lower()
-    # Extrair o ano do texto se present (pode diferir de `ano` para eventos de próximo ano)
-    m_ano = re.search(r'(\d{4})', t)
-    y = int(m_ano.group(1)) if m_ano else ano
+    t = texto.strip()
 
-    # "12 al 14 de julio de 2026"
-    m = re.match(r'^(\d{1,2})\s+al\s+(\d{1,2})\s+(?:de\s+)?(\w+)', t)
+    # Intervalo: DD/MM/YYYY-DD/MM/YYYY (com ou sem espaços)
+    m = re.match(r'(\d{1,2})/(\d{2})/(\d{4})\s*[-–]\s*(\d{1,2})/(\d{2})/(\d{4})', t)
     if m:
-        d1, d2, mes = m.groups()
-        num = MESES_ES.get(mes[:3])
-        if num:
-            return f"{y}-{num:02d}-{int(d1):02d}", f"{y}-{num:02d}-{int(d2):02d}"
+        d1, mes1, ano1, d2, mes2, ano2 = m.groups()
+        return f"{ano1}-{int(mes1):02d}-{int(d1):02d}", f"{ano2}-{int(mes2):02d}-{int(d2):02d}"
 
-    # "12-14 julio"
-    m = re.match(r'^(\d{1,2})-(\d{1,2})\s+(?:de\s+)?(\w+)', t)
+    # Dia único: DD/MM/YYYY
+    m = re.match(r'(\d{1,2})/(\d{2})/(\d{4})', t)
     if m:
-        d1, d2, mes = m.groups()
-        num = MESES_ES.get(mes[:3])
-        if num:
-            return f"{y}-{num:02d}-{int(d1):02d}", f"{y}-{num:02d}-{int(d2):02d}"
-
-    # "12 de julio de 2026" ou "12 julio"
-    m = re.match(r'^(\d{1,2})\s+(?:de\s+)?(\w+)', t)
-    if m:
-        d, mes = m.groups()
-        num = MESES_ES.get(mes[:3])
-        if num:
-            iso = f"{y}-{num:02d}-{int(d):02d}"
-            return iso, iso
+        d, mes, ano = m.groups()
+        iso = f"{ano}-{int(mes):02d}-{int(d):02d}"
+        return iso, iso
 
     return None, None
 
 
 def _links_listagem(soup) -> list[str]:
-    """Extrai links de detalhe de uma página de listagem."""
-    links = []
-    # concentracionesdemotos.com usa URLs do tipo /concentracion/<slug>/
-    for a in soup.find_all("a", href=re.compile(r'/concentracion[es]*/[^/]+/?$')):
-        href = a.get("href", "")
-        if href.startswith("http"):
-            links.append(href)
-        elif href.startswith("/"):
-            links.append(f"https://www.concentracionesdemotos.com{href}")
-    return list(dict.fromkeys(links))
-
-
-def _parsear_detalhe(soup, url: str, agora: str, ano: int) -> Optional[Concentracao]:
     """
-    Extrai dados de uma página de detalhe do concentracionesdemotos.com.
+    Extrai os links de detalhe de uma página de listagem.
 
-    O site usa um layout com campos em pares chave/valor ou em divs específicas.
+    Estratégia: procurar <li> que contenham um padrão de data DD/MM/YYYY
+    (distingue itens de evento de itens de navegação).
+    """
+    links = []
+    for li in soup.find_all('li'):
+        texto_li = li.get_text(strip=True)
+        # Um item de evento tem sempre uma data no formato DD/MM/YYYY
+        if not re.search(r'\d{2}/\d{2}/\d{4}', texto_li):
+            continue
+        a = li.find('a')
+        if not a:
+            continue
+        href = a.get('href', '').strip()
+        if not href or href in links:
+            continue
+        # Excluir links internos de navegação (não são eventos)
+        skip = ['/concentraciones/', '/racing', '/custom', '/trail',
+                '/scooter', '/clasicas', '/noticias/', '/tienda',
+                '/publicar-evento/', '/contacto', '/aviso', '/politica']
+        if any(href.rstrip('/').endswith(s.rstrip('/')) for s in skip):
+            continue
+        if href.startswith('/') and not href.startswith('//'):
+            href = f"https://www.concentracionesdemotos.com{href}"
+        if 'concentracionesdemotos.com' in href:
+            links.append(href)
+
+    return list(dict.fromkeys(links))  # deduplica mantendo ordem
+
+
+def _parsear_detalhe(soup, url: str, agora: str) -> Optional[Concentracao]:
+    """
+    Extrai dados de uma página de detalhe.
+
+    Estrutura: <h3>Rótulo</h3> seguido de nó de texto irmão.
+
+    Campos disponíveis:
+      "Lugar del Evento", "Fecha del Evento", "Tipo de Evento",
+      "Quién Organiza", "Cuánto Cuesta" + contacto (telefone/email)
     """
 
     def _texto(elem) -> str:
         return elem.get_text(strip=True) if elem else ""
 
-    # Título
-    titulo = _texto(soup.find("h1")) or _texto(soup.find("h2"))
+    # Título: H1 da página (ou og:title como fallback)
+    titulo = _texto(soup.find('h1'))
+    if not titulo:
+        og = soup.find('meta', property='og:title')
+        titulo = og.get('content', '') if og else ''
     if not titulo:
         return None
 
-    # Campos estruturados
+    # Extrair campos por <h3>Label</h3> + próximo sibling com texto
     campos: dict[str, str] = {}
-
-    # Tentar tabelas de informação
-    for tr in soup.find_all("tr"):
-        cels = tr.find_all(["td", "th"])
-        if len(cels) >= 2:
-            chave = _texto(cels[0]).lower().rstrip(":")
-            valor = _texto(cels[1])
-            if chave and valor:
-                campos[chave] = valor
-
-    # Tentar listas de definição
-    for dl in soup.find_all("dl"):
-        dts = dl.find_all("dt")
-        dds = dl.find_all("dd")
-        for dt, dd in zip(dts, dds):
-            campos[_texto(dt).lower()] = _texto(dd)
-
-    # Tentar <strong>Chave:</strong> Valor
-    for strong in soup.find_all("strong"):
-        chave = _texto(strong).lower().rstrip(":")
-        seguinte = strong.next_sibling
-        if seguinte and hasattr(seguinte, 'get_text'):
-            valor = seguinte.get_text(strip=True)
-        elif seguinte:
-            valor = str(seguinte).strip()
-        else:
-            valor = ""
-        if chave and valor:
-            campos[chave] = valor
+    for h3 in soup.find_all('h3'):
+        label = _texto(h3).lower().strip()
+        if not label:
+            continue
+        # Procurar o próximo sibling que tenha texto
+        sib = h3.next_sibling
+        while sib is not None:
+            if hasattr(sib, 'get_text'):
+                valor = sib.get_text(strip=True)
+                if valor and len(valor) > 1:
+                    campos[label] = valor
+                    break
+            elif isinstance(sib, str) and sib.strip():
+                campos[label] = sib.strip()
+                break
+            sib = sib.next_sibling
 
     def _campo(*chaves: str) -> Optional[str]:
         for k in chaves:
@@ -169,46 +151,46 @@ def _parsear_detalhe(soup, url: str, agora: str, ano: int) -> Optional[Concentra
                     return v
         return None
 
-    data_texto = _campo("fecha", "date", "data", "cuando", "cuándo")
-    localidade = _campo("localidad", "municipio", "lugar", "ciudad")
-    provincia = _campo("provincia", "province")
-    tipo_raw = _campo("tipo", "type", "categoría", "categoria")
-    preco = _campo("precio", "entrada", "precio de entrada", "importe")
-    tel = _campo("teléfono", "telefono", "phone", "contacto")
-    email = _campo("email", "correo")
-    url_oficial = _campo("web", "website")
-
-    # URL do cartaz (og:image)
-    url_cartaz = None
-    og_img = soup.find("meta", property="og:image")
-    if og_img:
-        url_cartaz = og_img.get("content")
-    tem_cartaz = bool(url_cartaz)
-
     # Data
+    data_texto = _campo("fecha del evento", "fecha")
     data_inicio, data_fim = None, None
     if data_texto:
-        data_inicio, data_fim = _parse_data_es(data_texto, ano)
-
-    if not data_inicio:
-        # Tentar extrair do título
-        m = re.search(r'(\d{1,2})\s+(?:de\s+)?(\w+)\s+(?:de\s+)?(\d{4})', titulo, re.IGNORECASE)
-        if m:
-            d, mes, y = m.groups()
-            num = MESES_ES.get(mes.lower()[:3])
-            if num:
-                iso = f"{y}-{num:02d}-{int(d):02d}"
-                data_inicio = data_fim = iso
+        data_inicio, data_fim = _parse_data_es(data_texto)
 
     if not data_inicio:
         logger.debug("concentracionesdemotos: sem data para %s", url)
         return None
 
+    # Localização
+    lugar = _campo("lugar del evento", "lugar")
+    localidade = None
+    provincia = None
+    if lugar:
+        # Formato: "San Lorenzo de la Parrilla\n(Cuenca)" ou "City (Province)"
+        m = re.match(r'^(.+?)\s*\((.+?)\)', lugar.replace('\n', ' '))
+        if m:
+            localidade = m.group(1).strip()
+            provincia = m.group(2).strip()
+        else:
+            localidade = lugar.strip()
+
+    # Outros campos
+    tipo_raw = _campo("tipo de evento", "tipo")
+    organizador = _campo("quién organiza", "organiza", "organizador")
+    preco = _campo("cuánto cuesta", "precio", "coste", "entrada")
+    tel = _campo("teléfono", "telefono")
+    email = _campo("email", "correo")
+
+    # Cartaz: og:image
+    url_cartaz = None
+    og_img = soup.find('meta', property='og:image')
+    if og_img:
+        url_cartaz = og_img.get('content')
+
     tipo = normalizar_tipo(tipo_raw, pais="ES")
 
-    loca = localidade.split(",")[0].strip() if localidade else None
     coords, uncertain = geocode(
-        localidade=loca,
+        localidade=localidade,
         distrito_provincia=provincia,
         pais="España",
     )
@@ -223,18 +205,18 @@ def _parsear_detalhe(soup, url: str, agora: str, ano: int) -> Optional[Concentra
         fonte="concentracionesdemotos",
         tipo_evento=tipo,
         tier=2,
-        tem_cartaz=tem_cartaz,
+        tem_cartaz=bool(url_cartaz),
         cancelado=False,
         sem_info=False,
         geocoding_uncertain=uncertain,
         atualizado_em=agora,
-        localidade=loca,
+        organizador=organizador,
+        localidade=localidade,
         distrito_provincia=provincia,
         latitude=lat,
         longitude=lng,
         url_cartaz=url_cartaz,
         url_evento=url,
-        url_fonte_oficial=url_oficial,
         preco=preco,
         contacto_telefone=tel,
         contacto_email=email,
@@ -250,14 +232,13 @@ def run(
     """
     Scraper do concentracionesdemotos.com.
 
-    Args:
-        url_principal: URL da listagem geral (próximos 2 meses).
-        urls_mensais:  Lista de URLs de páginas mensais para cobrir o resto do ano.
-        session:       Sessão HTTP (cria nova se None).
-        ano:           Ano a scraper.
+    Fluxo:
+    1. Fetch de todas as páginas de listagem (principal + mensais).
+    2. Extrair links de detalhe de <li> que contêm datas.
+    3. Visitar cada página de detalhe com o parser corrigido.
 
     Returns:
-        Lista de objectos Concentracao.
+        Lista de Concentracao.
     """
     if session is None:
         session = make_session()
@@ -267,15 +248,11 @@ def run(
     agora = datetime.utcnow().isoformat()
     todos_links: list[str] = []
 
-    # Fetch de todas as páginas de listagem (principal + mensais)
-    urls_a_visitar = [url_principal] + (urls_mensais or [])
-
-    for url_listagem in urls_a_visitar:
+    for url_listagem in [url_principal] + (urls_mensais or []):
         soup = get_soup(url_listagem, session, delay=1.5)
         if not soup:
             logger.warning("concentracionesdemotos: falhou fetch de %s", url_listagem)
             continue
-
         links = _links_listagem(soup)
         novos = [l for l in links if l not in todos_links]
         todos_links.extend(novos)
@@ -288,8 +265,7 @@ def run(
         soup_detalhe = get_soup(link, session, delay=1.5)
         if not soup_detalhe:
             continue
-
-        concentracao = _parsear_detalhe(soup_detalhe, link, agora, ano)
+        concentracao = _parsear_detalhe(soup_detalhe, link, agora)
         if concentracao:
             eventos.append(concentracao)
             logger.debug("concentracionesdemotos: %s (%s)", concentracao.nome, concentracao.data_inicio)
