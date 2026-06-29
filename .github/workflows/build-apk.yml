@@ -1,0 +1,181 @@
+# .github/workflows/build-apk.yml
+#
+# Compila o APK Android e publica-o como GitHub Release.
+#
+# Quando corre?
+#   - Push para o branch "main" (alterações ao código)
+#   - Após o scraper terminar (workflow_run)
+#   - Manualmente via "Run workflow" no GitHub
+#
+# O APK fica disponível em:
+#   GitHub → Releases → "latest-build" (tag always atualizada)
+#
+# SETUP NECESSÁRIO:
+#   Nenhum — usa o GITHUB_TOKEN automático do Actions.
+#   Para builds de release assinados, adiciona os secrets do keystore (ver abaixo).
+
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Só reconstrói se houver alterações relevantes
+      - "android/**"
+      - "src/**"
+      - "public/**"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+
+  workflow_run:
+    # Dispara automaticamente quando o scraper termina com sucesso
+    workflows: ["Scraper Concentrações Motard"]
+    types: [completed]
+
+  workflow_dispatch:   # Trigger manual
+
+jobs:
+  build:
+    name: Compilar APK
+    runs-on: ubuntu-latest
+    # No caso de workflow_run, só avança se o scraper tiver tido sucesso
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------
+      # Java 17 é obrigatório para Android Gradle Plugin 8.x
+      # -------------------------------------------------------------------
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # -------------------------------------------------------------------
+      # Node + npm — necessário para o Capacitor (cap sync)
+      # -------------------------------------------------------------------
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Instalar dependências Node
+        run: npm ci
+
+      - name: Sincronizar Capacitor → Android
+        run: npx cap sync android
+
+      # -------------------------------------------------------------------
+      # Compilar APK (debug — sem necessidade de keystore)
+      # Para builds de release assinados, ver comentário no final do ficheiro
+      # -------------------------------------------------------------------
+      - name: Dar permissão ao gradlew
+        run: chmod +x android/gradlew
+
+      - name: Compilar APK debug
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      # -------------------------------------------------------------------
+      # Determinar nome do APK com versão e data
+      # -------------------------------------------------------------------
+      - name: Definir metadados do build
+        id: meta
+        run: |
+          VERSION=$(grep versionName android/app/build.gradle | head -1 | tr -d ' "' | cut -d= -f2)
+          DATE=$(date +%Y%m%d)
+          RUN=${{ github.run_number }}
+          echo "apk_name=concentracoes-motard-v${VERSION}-build${RUN}-${DATE}.apk" >> $GITHUB_OUTPUT
+          echo "tag=latest-build" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Renomear APK
+        run: |
+          mv android/app/build/outputs/apk/debug/app-debug.apk \
+             "${{ steps.meta.outputs.apk_name }}"
+
+      # -------------------------------------------------------------------
+      # Upload como artefacto do Actions (disponível 90 dias no separador Actions)
+      # -------------------------------------------------------------------
+      - name: Guardar APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.apk_name }}
+          path: ${{ steps.meta.outputs.apk_name }}
+          retention-days: 90
+
+      # -------------------------------------------------------------------
+      # Publicar/atualizar a Release "latest-build"
+      # Mantém sempre o APK mais recente acessível via URL fixo:
+      #   github.com/<user>/<repo>/releases/tag/latest-build
+      # -------------------------------------------------------------------
+      - name: Apagar release anterior (se existir)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-build --yes 2>/dev/null || true
+          git push origin :refs/tags/latest-build 2>/dev/null || true
+
+      - name: Criar nova release com o APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create latest-build \
+            --title "Build mais recente — v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.date }})" \
+            --notes "$(cat <<'EOF'
+          ## APK — Build automático
+
+          **Versão:** ${{ steps.meta.outputs.version }}
+          **Build #:** ${{ github.run_number }}
+          **Data:** ${{ steps.meta.outputs.date }}
+          **Commit:** ${{ github.sha }}
+
+          > ⚠️ Este é um APK **debug** — não assinado para produção.
+          > Para instalar: ativa "Fontes desconhecidas" nas definições do Android.
+          EOF
+          )" \
+            --prerelease \
+            "${{ steps.meta.outputs.apk_name }}"
+
+# =============================================================================
+# BUILDS DE RELEASE ASSINADOS (opcional, para distribuição na Play Store)
+# =============================================================================
+# Para gerar um APK assinado em vez de debug, substituir o step "Compilar APK"
+# por uma configuração com keystore. Passos:
+#
+# 1. Gerar keystore local:
+#      keytool -genkey -v -keystore my-release-key.jks \
+#        -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000
+#
+# 2. Converter para base64 e guardar como secret no GitHub:
+#      base64 my-release-key.jks | pbcopy
+#      → KEYSTORE_BASE64
+#      → KEYSTORE_PASSWORD
+#      → KEY_ALIAS
+#      → KEY_PASSWORD
+#
+# 3. Substituir o step de compilação por:
+#      - name: Compilar APK release assinado
+#        working-directory: android
+#        env:
+#          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+#          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+#          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+#          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+#        run: |
+#          echo "$KEYSTORE_BASE64" | base64 -d > app/my-release-key.jks
+#          ./gradlew assembleRelease \
+#            -Pandroid.injected.signing.store.file=my-release-key.jks \
+#            -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
+#            -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
+#            -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
+#            --no-daemon

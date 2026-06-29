@@ -1,0 +1,8 @@
+{
+  "appId": "pt.concentracoesmotard.app",
+  "appName": "Concentrações Motard",
+  "webDir": "docs",
+  "server": {
+    "androidScheme": "https"
+  }
+}
